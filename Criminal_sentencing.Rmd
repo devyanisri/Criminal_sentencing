@@ -1,0 +1,130 @@
+---
+title: "Criminal_Sentencing"
+author: "Devyani Srivastava"
+date: "2022-11-15"
+output: html_document
+---
+
+*Algorithmic Bias in Criminal Sentencing*
+
+Following is an example of data science in Journalism. The purpose of the project is to shed light on how the criminal sentencing by **Correctional Offender Management Profiling for Alternative Sanctions(COMPAS)** is racially biased. The purpose of Journalism is to give voice and by use of such projects it exactly does that.
+
+```{r}
+#loading libraries
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(caTools)
+library(pROC)
+library(caret)
+library(psych)
+```
+For the purpose of the project I have taken the dataset from **ProPublica of criminal justice records from Broward County, Florida** and created own risk assessment model.
+
+```{r}
+crime<-read.csv("https://raw.githubusercontent.com/propublica/compas-analysis/master/compas-scores-two-years.csv",header = TRUE)
+
+head(crime)
+
+```
+**Data Cleaning** 
+for the final model i have selected features most relevant for analysis that includes Sex,Race,Prior count, Juvenile felony Count, Juvenile misdemeanor count, Juvenile other count, charge degree, and two year recidivism. Age at charge was calculated from difference of their date of birth and date when they went to jail. The age was categorized to five categories and length of stay at jail was counted by subtracting c_jail_out and c_jail_in. All the NA values were dropped.
+
+```{r}
+clean<-crime%>%select("sex","race","priors_count","juv_fel_count","juv_misd_count","juv_other_count","c_charge_degree","c_jail_out","c_jail_in","dob","age","two_year_recid")%>%mutate(age.at.charge=as.Date(c_jail_in)-as.Date(dob),length_of_stay=as.Date(c_jail_out) - as.Date(c_jail_in))%>%na.omit()
+clean<-clean%>%select(-c("c_jail_out","c_jail_in","dob"))
+```
+```{r}
+
+for(i in (1:range(nrow(clean)))){
+  if (clean$age[i]>16 & clean$age[i]<25){clean$age[i]="[17,24]"}
+  if (clean$age[i]>24 & clean$age[i]<32){clean$age[i]="(24,31]"}
+  if (clean$age[i]>31 & clean$age[i]<43){clean$age[i]="(31,42]"}
+  if (clean$age[i]>42 & clean$age[i]<81){clean$age[i]="(42,80]"}
+  if(clean$age[i]>80){clean$age[i]="older"} 
+}   
+
+clean<-clean%>%rename(age.cat=age)
+```
+**Exploratory Data Analysis**
+
+```{r}
+crime%>%ggplot(mapping = aes(x = age, fill=age_cat)) + geom_bar()
+```
+Frome the original dataset we can conclude that most recidivism activity was found for 27-40s age group.
+```{r}
+c1<-clean %>%ggplot(mapping = aes(x = race, fill=as.factor(two_year_recid))) + geom_bar()+ggtitle("Racial representation of two year recidivism")
+
+c2<-clean%>%filter(sex=="Female")%>%ggplot(aes(x=race,fill=as.factor(two_year_recid)))+geom_bar()+ggtitle("Female representation of two year  recidivism")
+
+c3<-clean%>%filter(sex=="Male")%>%ggplot(aes(x=race,fill=as.factor(two_year_recid)))+geom_bar()+ggtitle("Male representation of those two year recidivism")
+
+grid.arrange(c1, c2,c3, ncol = 1,nrow=3)
+```
+Above graphs represents the analysis of two year recidivism and it is can be clearly concluded that overall more African american have  recidivism score than any other races and so is true while doing gender wise analysis. Although difference between second most and first  race i.e.  Caucasian and African american is less for females when compare to males.
+
+
+From the above graphs overall recidivism activity was most implicated for people between 24-31 age 
+
+**Creating correlation matrix**
+
+```{r}
+pairs.panels(clean)
+```
+From the correlation matrix we can implicate that the features does not have any significant correlation which is good sign for our model
+
+**Creating training and testing datasets**
+Divide train and test in 80-20 ratio
+
+```{r}
+
+index.doc<-sample(x=nrow(crime), size=0.80*nrow(crime))
+train_crime<-clean[index.doc,]
+test_crime<-clean[-index.doc,]
+
+```
+
+**Logistic Regression Model**
+Output variable is taken as two year recidivism score
+```{r}
+crime_glm<-glm(train_crime$two_year_recid~ .,data=train_crime,family = binomial)
+summary(crime_glm)
+```
+Predicting the recidivism score using model on testing dataset
+```{r}
+predict_crime<-predict(crime_glm,test_crime,type='response')
+```
+
+using the sigmoid concept
+```{r}
+predicted<-ifelse(predict_crime>0.50,1,0)
+```
+
+**Confusion Matrix**
+```{r}
+confusionMatrix(as.factor(test_crime$two_year_recid),as.factor(predicted))
+```
+Sensitivity or True positive rate which is true positive rate the percentage of individuals the model correctly predicted . Here Sensistivity is low that means that model did not correctly predicted the recidivism score i.e. people who should be have high recidivism  shouldnt have low recidivism score.
+
+Specificity or true negative rate the percentage of individuals the model correctly predicted would have low risk. For the above model the specificity is low i.e. people who have low recidivism shouldnt have  low recidivism score.
+
+The model also have low accuracy
+
+**ROC Curve**
+
+```{r}
+ggroc(roc(test_crime$two_year_recid,predict_crime))
+```
+
+The ROC Curve of our classification model is bad. A poor classifier will not properly distinguish between the two classes.
+
+**Algorithmic Bias**
+
+From the evaluation of model it is clearly indicated that the dataset is biased because people of certain race were implicated to higher risk score by model wrongfully, since race and sex are one of the inputs of the dataset as well. To remove the algorithmic bias the basis to train the model should not be such factors.
+
+**Conclusion**
+
+The model is clearly biased because it takes race and sex as one of it's features. As there is lot of history behind wrongfully conviction and supression of one race by another having such factors in training the model is ethically wrong. Also, the evaluation of model suggests that sizeable  people who have low risk score should have high risk score and visa a versa. With such a model in implementation in real life people can be wrongfully convicted and those who should be convicted just because they belong to certain race are out of consideration.
